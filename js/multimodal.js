@@ -1,77 +1,244 @@
-(function ($, window) {
-    var MultiModal = function (element) {
-        this.$element = $(element);
-        this.modalCount = 0;
-    };
+/*
+ * Bootstrap multi modal support.
+ * Comes with loads of monkey patching.
+ *
+ * https://github.com/aleho/bootstrap-multimodal
+ *
+ * Licensed under the MIT license:
+ * https://opensource.org/licenses/MIT
+ *
+ *
+ * Copyright: Alexander Hofbauer, <alex@derhofbauer.at>
+ *
+ * (Originally based on https://github.com/jhaygt/bootstrap-multimodal by jhaygt.)
+ *
+ */
+BootstrapMultimodal = (function ($) {
+    var BASE_ZINDEX       = 1040;
+    var ZINDEX_MULTIPLIER = 20;
+    var ZINDEX_MODAL      = 10;
+    var NAVBAR_SELECTOR   = '.apply-modal-open-padding .navbar';
 
-    MultiModal.BASE_ZINDEX = 1040;
+    var modalsCount = 0;
+    var $firstModal = null;
 
-    MultiModal.prototype.show = function (target) {
-        var that = this;
-        var $target = $(target);
 
-        // Bootstrap triggers the show event at the beginning of the show function and before
-        // the modal backdrop element has been created. The timeout here allows the modal
-        // show function to complete, after which the modal backdrop will have been created
-        // and appended to the DOM.
-        window.setTimeout(function () {
-            that.modalCount = getModalCount();
+    /**
+     * Hides any extra backdrops created by bootstrap and arranges the first one to always be below the top modal.
+     */
+    function adjustBackdrops() {
+        var modalIndex     = modalsCount - 1;
+        var $firstBackdrop = $('.modal-backdrop:first');
 
-            // we only want one backdrop; hide any extras
-            if (that.modalCount > 1)
-                $('.modal-backdrop').not(':first').addClass('hidden');
+        $('.modal-backdrop').not(':first').addClass('hidden');
 
-            that.adjustModal($target);
-            that.adjustBackdrop();
-        });
-    };
-
-    MultiModal.prototype.hidden = function (target) {
-        this.modalCount = getModalCount();
-
-        if (this.modalCount) {
-            this.adjustBackdrop();
-
-            // bootstrap removes the modal-open class when a modal is closed; add it back
-            $('body').addClass('modal-open');
+        if (modalIndex == 0) {
+            $firstBackdrop.css('z-index', '');
+        } else {
+            $firstBackdrop.css('z-index', BASE_ZINDEX + (modalIndex * ZINDEX_MULTIPLIER));
         }
-    };
-
-    function getModalCount () {
-        return $('.modal:visible').length;
     }
 
-    MultiModal.prototype.adjustModal = function ($target) {
-        var modalIndex = this.modalCount - 1;
-        $target.css('z-index', MultiModal.BASE_ZINDEX + (modalIndex * 20) + 10);
-    };
+    /**
+     * Moves a modal to the correct z-index position.
+     *
+     * @param $modal
+     */
+    function adjustModal($modal) {
+        var modalIndex = modalsCount - 1;
 
-    MultiModal.prototype.adjustBackdrop = function () {
-        var modalIndex = this.modalCount - 1;
-        $('.modal-backdrop:first').css('z-index', MultiModal.BASE_ZINDEX + (modalIndex * 20));
-    };
-
-    function Plugin(method, target) {
-        return this.each(function () {
-            var $this = $(this);
-            var data = $this.data('multi-modal-plugin');
-
-            if (!data)
-                $this.data('multi-modal-plugin', (data = new MultiModal(this)));
-
-            if (method)
-                data[method](target);
-        });
+        $modal.css('z-index', BASE_ZINDEX + (modalIndex * ZINDEX_MULTIPLIER) + ZINDEX_MODAL);
     }
 
-    $.fn.multiModal = Plugin;
-    $.fn.multiModal.Constructor = MultiModal;
+    /**
+     * Monkey patches modal's hide for resetting of counts and body adjustments.
+     *
+     * @param {Object} modal
+     */
+    function patchModalHide(modal) {
+        if (modal.__isHidePatched === true) {
+            return;
+        }
+        modal.__isHidePatched = true;
 
-    $(document).on('show.bs.modal', function (e) {
-        $(document).multiModal('show', e.target);
-    });
+        var hide = modal.hide;
 
-    $(document).on('hidden.bs.modal', function (e) {
-        $(document).multiModal('hidden', e.target);
-    });
-}(jQuery, window));
+        modal.hide = function (event) {
+            var wasShown = modal.isShown;
+            hide.apply(modal, arguments);
+
+            if (!wasShown || (wasShown && this.isShown)) {
+                return;
+            }
+
+            modalsCount--;
+
+            if (modalsCount > 0) {
+                adjustBackdrops();
+            }
+        }.bind(modal);
+    }
+
+    /**
+     * Monkey patches modal's adjustDialog for resetting of counts and body adjustments.
+     *
+     * @param {Object} modal
+     */
+    function patchModalAdjustDialog(modal) {
+        if (modal.__isAdjustDialogPatched === true) {
+            return;
+        }
+        modal.__isAdjustDialogPatched = true;
+
+        var firstModal         = $firstModal.data('bs.modal');
+        var bodyIsOverflowing  = firstModal.bodyIsOverflowing;
+        var scrollbarWidth     = firstModal.scrollbarWidth;
+
+        modal.adjustDialog = function () {
+            var modalIsOverflowing = this.$element[0].scrollHeight > document.documentElement.clientHeight;
+
+            // make sure paddings are set correctly according to first modal's determination of paddings
+            this.$element.css({
+                paddingLeft:  !bodyIsOverflowing && modalIsOverflowing ? scrollbarWidth : '',
+                paddingRight: bodyIsOverflowing && !modalIsOverflowing ? scrollbarWidth : ''
+            });
+        }.bind(modal);
+    }
+
+    /**
+     * Monkey patches modal's backdrop for positional adjustments.
+     * Only executed for stacked modals.
+     *
+     * @param {Object} modal
+     */
+    function patchModalBackdrop(modal) {
+        if (modal.__isBackdropPatched === true) {
+            return;
+        }
+        modal.__isBackdropPatched = true;
+
+        var backdrop = modal.backdrop;
+
+        modal.backdrop = function () {
+            backdrop.apply(modal, arguments);
+            adjustBackdrops();
+        };
+    }
+
+    /**
+     * Patches a modal's padding setting for hidden body scrollbars.
+     * Only executed for stacked modals.
+     *
+     * @param modal
+     */
+    function patchModalSetScrollbar(modal) {
+        var $navbars = $(NAVBAR_SELECTOR);
+
+        var setScrollbar = modal.setScrollbar;
+        modal.setScrollbar = function () {
+            setScrollbar.apply(modal, arguments);
+
+            if (modal.bodyIsOverflowing) {
+                $navbars.css('padding-right', modal.$body.css('padding-right'));
+            }
+        };
+
+        var resetScrollbar = modal.resetScrollbar;
+        modal.resetScrollbar = function () {
+            resetScrollbar.apply(modal, arguments);
+
+            $navbars.css('padding-right', '');
+        };
+    }
+
+    /**
+     * Patches a modal's methods.
+     *
+     * @param $modal
+     */
+    function patchModal($modal) {
+        var modal = $modal.data('bs.modal');
+
+        patchModalHide(modal);
+
+        if (modalsCount == 1) {
+            patchModalSetScrollbar(modal);
+
+        } else if (modalsCount > 1) {
+            adjustModal($modal);
+            patchModalAdjustDialog(modal);
+            patchModalBackdrop(modal);
+
+            modal.setScrollbar   = function () { /* noop */ };
+            modal.resetScrollbar = function () {
+                if (modalsCount > 0) {
+                    modal.$body.addClass('modal-open');
+                }
+            };
+        }
+    }
+
+
+    /**
+     * Bootstrap triggers the show event at the beginning of the show function and before
+     * the modal backdrop element has been created.
+     *
+     * The additional event listener allows bootstrap to complete show, after which the modal backdrop will have been
+     * created and appended to the DOM.
+     *
+     * @param event
+     */
+    function onShow(event) {
+        if (event && event.isDefaultPrevented()) {
+            return;
+        }
+
+        var $modal = $(event.target);
+
+        if ($modal.data('multimodal') == 'disabled') {
+            return;
+        }
+
+        modalsCount++;
+
+        if (!$firstModal || modalsCount == 1) {
+            $firstModal = $modal;
+        }
+
+        patchModal($modal);
+    }
+
+    function onHidden()
+    {
+    	//alert(999);
+    	if(modalsCount>0)
+    	{
+    		$('body').addClass('modal-open');
+    	}
+    }
+    /**
+     * Enables multimodal patching.
+     */
+    function enable() {
+        $(document).on('show.bs.modal.multimodal', onShow);
+        $(document).on('hidden.bs.modal.multimodal', onHidden);
+    }
+
+    /**
+     * Disables multimodal patching.
+     */
+    function disable() {
+        $(document).off('show.bs.modal.multimodal', onShow);
+        $(document).off('hide.bs.modal.multimodal', onHide);
+    }
+
+    
+    // enable by default
+    enable();
+
+
+    return {
+        disable: disable,
+        enable:  enable
+    };
+}(jQuery));
