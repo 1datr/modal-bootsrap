@@ -25,4 +25,8 @@ $('#my-modal').on('show.bs.modal', function(e) {
 $('#my-modal').on('hidden.bs.modal', function(e) {
     e.stopPropagation();
 });
+
+$(document).off('hide.bs.modal.multimodal', function(e) {
+    e.stopPropagation();
+});
 ```
