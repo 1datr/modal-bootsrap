@@ -210,8 +210,12 @@ BootstrapMultimodal = (function ($) {
 
     function onHidden()
     {
-    	//alert(999);
-    	if(modalsCount>0)
+    	var open_modals_count = $('.modal.show').length;
+    	if(open_modals_count==0)
+    	{
+    		$('body').removeClass('modal-open');
+    	}
+    	else
     	{
     		$('body').addClass('modal-open');
     	}
