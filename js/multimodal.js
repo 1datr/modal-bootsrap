@@ -27,7 +27,7 @@ BootstrapMultimodal = (function ($) {
      * Hides any extra backdrops created by bootstrap and arranges the first one to always be below the top modal.
      */
     function adjustBackdrops() {
-        var modalIndex     = modalsCount - 1;
+    	var modalIndex     = modalsCount - 1;
         var $firstBackdrop = $('.modal-backdrop:first');
 
         $('.modal-backdrop').not(':first').addClass('hidden');
@@ -91,8 +91,12 @@ BootstrapMultimodal = (function ($) {
         modal.__isAdjustDialogPatched = true;
 
         var firstModal         = $firstModal.data('bs.modal');
-        var bodyIsOverflowing  = firstModal.bodyIsOverflowing;
-        var scrollbarWidth     = firstModal.scrollbarWidth;
+        bodyIsOverflowing = false;
+        if(firstModal!=undefined)
+        {
+        	var bodyIsOverflowing  = firstModal.bodyIsOverflowing;
+            var scrollbarWidth     = firstModal.scrollbarWidth;	
+        }        
 
         modal.adjustDialog = function () {
             var modalIsOverflowing = this.$element[0].scrollHeight > document.documentElement.clientHeight;
